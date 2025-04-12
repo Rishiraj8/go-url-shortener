@@ -66,7 +66,17 @@ func shortenHandler(w http.ResponseWriter, r *http.Request) {
 
 // Handler for GET /{code}
 func redirectHandler(w http.ResponseWriter, r *http.Request) {
+/*	Part	What it gives you
+r.URL.Scheme	"http"
+r.Host	"localhost:8080"
+r.URL.Path	"/abc123"
+r.URL.String()	"/abc123"
+r.RequestURI	"/abc123"
+*/
 	code := r.URL.Path[1:] // remove leading "/"
+	code2:=r.URL.Path;
+	fmt.Println(code);
+	fmt.Println(code2);
 	originalURL, ok := urlStore[code]
 	if !ok {
 		http.Error(w, "Short URL not found", http.StatusNotFound)
