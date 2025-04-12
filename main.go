@@ -1,31 +1,33 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
-	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Global in-memory map for short code -> original URL
-var urlStore = make(map[string]string)
+var db *pgxpool.Pool
 
 func main() {
-	rand.Seed(time.Now().UnixNano()) // Seed random number generator once
-
-	fmt.Println("Om Saravana Bhava 😂")
-
+	var err error
+	db, err = pgxpool.New(context.Background(), "postgres://postgres:081204@localhost:5432/url_shortener")
+	if err != nil {
+		log.Fatal("Unable to connect to database:", err)
+	}
+	defer db.Close()
+	// db, err = pgxpool.New(context.Background(), "postgres://postgres:081204@localhost:5432/url_shortener")
+	
 	http.HandleFunc("/", redirectHandler)         // handles GET /{code}
 	http.HandleFunc("/shorten", shortenHandler)   // handles POST /shorten
 
 	log.Println("Server is listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
-	
 }
-
-// Handler for POST /shorten
 func shortenHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Only POST allowed", 405)
@@ -46,8 +48,14 @@ func shortenHandler(w http.ResponseWriter, r *http.Request) {
 	// Generate a short code
 	code := fmt.Sprint(rand.Intn(99999))
 	//generate a reandom integer and convert it a string
-	urlStore[code] = body.URL
-
+	_, err = db.Exec(context.Background(),
+	"INSERT INTO url_mappings (short_code,original_url) VALUES ($1,$2)",
+	code, body.URL)
+if err != nil {
+	http.Error(w, "Database insert failed", http.StatusInternalServerError)
+	fmt.Println(err)
+	return
+}
 	type Response struct {
 		ShortURL string `json:"short_url"`
 	}
@@ -60,37 +68,27 @@ func shortenHandler(w http.ResponseWriter, r *http.Request) {
 	//which may or may not be required but its a good way of practising
 	json.NewEncoder(w).Encode(resp)
 	//add json to the write (w) method then insert the json data(resp) to the "w" created json
-	fmt.Println(urlStore);
-	
 }
 
-// Handler for GET /{code}
 func redirectHandler(w http.ResponseWriter, r *http.Request) {
-/*	Part	What it gives you
-r.URL.Scheme	"http"
-r.Host	"localhost:8080"
-r.URL.Path	"/abc123"
-r.URL.String()	"/abc123"
-r.RequestURI	"/abc123"
-*/
-	code := r.URL.Path[1:] // remove leading "/"
-	code2:=r.URL.Path;
-	fmt.Println(code);
-	fmt.Println(code2);
-	originalURL, ok := urlStore[code]
-	if !ok {
-		http.Error(w, "Short URL not found", http.StatusNotFound)
-		return
-	}
-	http.Redirect(w, r, originalURL, http.StatusFound)
+	/*	Part	What it gives you
+	r.URL.Scheme	"http"
+	r.Host	"localhost:8080"
+	r.URL.Path	"/abc123"
+	r.URL.String()	"/abc123"
+	r.RequestURI	"/abc123"
+	*/
+		code := r.URL.Path[1:] // remove leading "/"
+		code2:=r.URL.Path;
+		fmt.Println(code);
+		fmt.Println(code2);
+		
+		var originalURL string
+err := db.QueryRow(context.Background(),
+	"SELECT original_url from url_mappings where short_code=$1", code).Scan(&originalURL)
+if err != nil {
+	http.Error(w, "Short URL not found", http.StatusNotFound)
+	return
 }
-
-// Helper: generate a random 6-character string
-// func randomString(n int) string {
-// 	letters := []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-// 	b := make([]rune, n)
-// 	for i := range b {
-// 		b[i] = letters[rand.Intn(len(letters))]
-// 	}
-// 	return string(b)
-// }
+		http.Redirect(w, r, originalURL, http.StatusFound)
+	}
