@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var db *pgxpool.Pool
@@ -79,8 +79,9 @@ func shortenHandler(w http.ResponseWriter, r *http.Request) {
 	// Construct short URL
 	baseURL := os.Getenv("BASE_URL")
 	if baseURL == "" {
-		baseURL = "https://go-url-shortener-xgb2.onrender.com/"
+		baseURL = "http://localhost:8080"
 	}
+	// fmt.Print(baseURL);
 
 	resp := struct {
 		ShortURL string `json:"short_url"`
