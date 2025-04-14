@@ -7,30 +7,48 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
 
+	"github.com/joho/godotenv"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var db *pgxpool.Pool
 
 func main() {
+	// Load .env (optional in cloud, helpful locally)
+	_ = godotenv.Load()
+
+	// Get DATABASE_URL from environment
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		log.Fatal("DATABASE_URL not set")
+	}
+
+	// Connect to DB
 	var err error
-	db, err = pgxpool.New(context.Background(), "postgres://postgres:081204@localhost:5432/url_shortener")
+	db, err = pgxpool.New(context.Background(), dbURL)
 	if err != nil {
 		log.Fatal("Unable to connect to database:", err)
 	}
 	defer db.Close()
-	// db, err = pgxpool.New(context.Background(), "postgres://postgres:081204@localhost:5432/url_shortener")
-	
-	http.HandleFunc("/", redirectHandler)         // handles GET /{code}
-	http.HandleFunc("/shorten", shortenHandler)   // handles POST /shorten
 
-	log.Println("Server is listening on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	// Handlers with CORS support
+	http.HandleFunc("/", withCORS(redirectHandler))
+	http.HandleFunc("/shorten", withCORS(shortenHandler))
+
+	// Get PORT from env (Render sets PORT=10000)
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080" // fallback for local dev
+	}
+	log.Println("Server is listening on port", port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
+
 func shortenHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Only POST allowed", 405)
+		http.Error(w, "Only POST allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -45,50 +63,59 @@ func shortenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate a short code
-	code := fmt.Sprint(rand.Intn(99999))
-	//generate a reandom integer and convert it a string
+	// Generate short code
+	code := fmt.Sprintf("%05d", rand.Intn(100000))
+
+	// Insert into DB
 	_, err = db.Exec(context.Background(),
-	"INSERT INTO url_mappings (short_code,original_url) VALUES ($1,$2)",
-	code, body.URL)
-if err != nil {
-	http.Error(w, "Database insert failed", http.StatusInternalServerError)
-	fmt.Println(err)
-	return
-}
-	type Response struct {
-		ShortURL string `json:"short_url"`
+		"INSERT INTO url_mappings (short_code, original_url) VALUES ($1, $2)",
+		code, body.URL)
+	if err != nil {
+		http.Error(w, "Database insert failed", http.StatusInternalServerError)
+		fmt.Println(err)
+		return
 	}
 
-	resp := Response{
-		ShortURL: "http://localhost:8080/" + code,
+	// Construct short URL
+	baseURL := os.Getenv("BASE_URL")
+	if baseURL == "" {
+		baseURL = "http://localhost:8080"
 	}
+
+	resp := struct {
+		ShortURL string `json:"short_url"`
+	}{
+		ShortURL: baseURL + "/" + code,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	//actually this above command for more strucutre coding to know the written type is json
-	//which may or may not be required but its a good way of practising
 	json.NewEncoder(w).Encode(resp)
-	//add json to the write (w) method then insert the json data(resp) to the "w" created json
 }
 
 func redirectHandler(w http.ResponseWriter, r *http.Request) {
-	/*	Part	What it gives you
-	r.URL.Scheme	"http"
-	r.Host	"localhost:8080"
-	r.URL.Path	"/abc123"
-	r.URL.String()	"/abc123"
-	r.RequestURI	"/abc123"
-	*/
-		code := r.URL.Path[1:] // remove leading "/"
-		code2:=r.URL.Path;
-		fmt.Println(code);
-		fmt.Println(code2);
-		
-		var originalURL string
-err := db.QueryRow(context.Background(),
-	"SELECT original_url from url_mappings where short_code=$1", code).Scan(&originalURL)
-if err != nil {
-	http.Error(w, "Short URL not found", http.StatusNotFound)
-	return
-}
-		http.Redirect(w, r, originalURL, http.StatusFound)
+	code := r.URL.Path[1:] // remove leading "/"
+	fmt.Println("Redirect code:", code)
+
+	var originalURL string
+	err := db.QueryRow(context.Background(),
+		"SELECT original_url FROM url_mappings WHERE short_code = $1", code).Scan(&originalURL)
+	if err != nil {
+		http.Error(w, "Short URL not found", http.StatusNotFound)
+		return
 	}
+
+	http.Redirect(w, r, originalURL, http.StatusFound)
+}
+
+func withCORS(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next(w, r)
+	}
+}
